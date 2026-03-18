@@ -1,0 +1,13 @@
+# Core dependencies
+google-adk
+openai
+pydantic
+tenacity
+pyyaml
+loguru
+
+# ML/RL dependencies
+jax
+jaxlib
+brax
+numpy
