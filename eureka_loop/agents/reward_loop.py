@@ -12,19 +12,30 @@ def _load_yaml(path):
         return yaml.safe_load(f)
 
 def build_reward_loop():
-    loop_cfg = _load_yaml("configs/loop_config.yaml")
+    # Reads settings like iterations, openai_model, training parameters.
+    loop_cfg = _load_yaml("configs/loop_config.yaml")   
     model = loop_cfg.get("openai_model", "gpt-4o-mini")
 
-    return LoopAgent(
+    return LoopAgent(   # Create LoopAgent with the specified sub-agents and configuration.
         name="RewardEvolutionLoop",
         sub_agents=[
-            RewardDesignerOpenAIAgent(model=model),
-            CandidateEvaluatorAgent(),
-            SelectorAgent(name="SelectorAgent"),
-            RewardReflectorOpenAIAgent(model=model),
-            HumanReflectionAgent(name="HumanReflectionAgent"),  # Human-in-the-loop after LLM reflection
-            ExitCheckerAgent(name="ExitCheckerAgent"),
-            IncrementIterationAgent(name="IncrementIterationAgent"),
+            # Agent that designs reward functions based on the current state of the loop and feedback.
+            RewardDesignerOpenAIAgent(model=model), 
+            # Agent that evaluates the candidate reward functions designed by the RewardDesignerAgent.
+            CandidateEvaluatorAgent(), 
+            # Agent that selects the best reward function based on the evaluations from the CandidateEvaluatorAgent.
+            SelectorAgent(name="SelectorAgent"), 
+            # Agent that reflects on the selected reward function and provides feedback for improvement.
+            RewardReflectorOpenAIAgent(model=model),    
+            # Human-in-the-loop after LLM reflection
+            HumanReflectionAgent(name="HumanReflectionAgent"),  
+            # Agent that checks if the loop should exit based on certain criteria, 
+            # such as convergence or performance thresholds.
+            ExitCheckerAgent(name="ExitCheckerAgent"),  
+            # Agent that increments the iteration count. 
+            # This is important for tracking how many iterations the loop has gone through 
+            # and can be used for logging or exit conditions.
+            IncrementIterationAgent(name="IncrementIterationAgent"), 
         ],
         max_iterations=loop_cfg["iterations"]
     )

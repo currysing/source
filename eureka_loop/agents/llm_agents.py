@@ -1,7 +1,7 @@
 import os
 import json
 from openai import OpenAI
-from pydantic import PrivateAttr
+from pydantic import PrivateAttr    # Pydantic private attributes (not serialized)
 from loguru import logger
 
 from google.adk.agents import BaseAgent
@@ -9,11 +9,16 @@ from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event
 from typing import AsyncGenerator
 
+# Global API client initialized once at the module level. 
+# This client is thread-safe and can be reused across agent invocations.
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
+# Separator between multiple reward function candidates in LLM output
 CANDIDATE_DELIM = "### CANDIDATE ###"
+# System prompt for the designer LLM
 DESIGNER_SYSTEM = "You are a precise reward-function code generator for JAX/Brax environments."
 
+# Builds the complete prompt for the Reward Designer LLM
 def _designer_prompt(task_spec, env_code, best_reward_code, reflection, K, candidate_results: str | None = None):
     """
     Build the prompt for the Reward Designer.
@@ -21,6 +26,8 @@ def _designer_prompt(task_spec, env_code, best_reward_code, reflection, K, candi
     From iteration 2 onward, we include an explicit "Query with Feedback" section
     (policy training/eval results + reflection) similar to the Eureka paper diagram.
     """
+    # Determine Improvement vs. Initial Generation
+    # If we have a best reward from a previous iteration, we provide detailed feedback and instructions for improvement.
     if best_reward_code:
         improvement_instruction = f"""IMPORTANT: You MUST generate {K} IMPROVED versions of the BEST REWARD SO FAR below.
 - Each candidate should be a PROGRESSIVE IMPROVEMENT or VARIATION of the best reward
@@ -70,6 +77,10 @@ Generate {K} improved reward function candidates that:
   * Reward maintaining body height (prevent falling)
   * Penalize large orientation deviations
   * Balance speed and stability - the task requires BOTH"""
+        
+    # Initial Generation (best_reward_code is empty - iteration 1)
+    # Generate novel candidates from scratch without any feedback or best reward code, 
+    # but still emphasizing the need to balance speed and stability.
     else:
         improvement_instruction = f"""Generate {K} initial reward candidates for this task.
 - These are the first candidates, so explore different reward shaping approaches
@@ -143,6 +154,7 @@ class RewardDesignerOpenAIAgent(BaseAgent):
         super().__init__(name="RewardDesignerOpenAIAgent", **kwargs)
         self._model = model
 
+    # Main Execution Method for the Reward Designer Agent
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         iteration = ctx.session.state.get("iteration", 1)
         best_reward_code = ctx.session.state.get("best_reward_code", "")
@@ -197,11 +209,14 @@ class RewardDesignerOpenAIAgent(BaseAgent):
         else:
             logger.info("  - reflection: EMPTY (no previous reflection available)")
         
+        # Get Candidate Results for Iteration > 1
+        # Only include candidate results if they exist (i.e., from iteration 2 onward).
         candidate_results = None
         # Only include "query with feedback" after we have results (i.e., from iteration 2 onward).
         if iteration > 1:
             candidate_results = ctx.session.state.get("candidate_results", None)
 
+        # Build Prompt for the Reward Designer LLM
         prompt = _designer_prompt(
             ctx.session.state["task_spec"],
             ctx.session.state["env_code"],
@@ -211,11 +226,12 @@ class RewardDesignerOpenAIAgent(BaseAgent):
             candidate_results=candidate_results,
         )
 
+        # LLM Call with Retry Logic
         from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
         
         @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=2, max=10),
+            stop=stop_after_attempt(3),     # Max 3 attempts
+            wait=wait_exponential(multiplier=1, min=2, max=10), # Exponential backoff: 2s → 4s → 10s max
             retry=retry_if_exception_type((Exception,)),  # Retry on any exception
             reraise=True
         )
@@ -226,12 +242,14 @@ class RewardDesignerOpenAIAgent(BaseAgent):
                     {"role": "system", "content": DESIGNER_SYSTEM},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.4,
+                temperature=0.4,    # Temperature 0.4 for balanced creativity
             )
         
         try:
             resp = call_llm()
             generated_text = resp.choices[0].message.content
+            # Stores raw LLM response in reward_candidates_text for debugging/analysis purposes. 
+            # This is the unprocessed text that will be parsed to extract individual candidates.
             ctx.session.state["reward_candidates_text"] = generated_text
             
             # Count how many candidates were generated
@@ -257,12 +275,14 @@ class RewardReflectorOpenAIAgent(BaseAgent):
         candidate_results = ctx.session.state.get("candidate_results", "")
         best_candidate_index = ctx.session.state.get("best_candidate_index", 0)
         
-        # Validate required state
+        # Skips reflection on first iteration (no results yet) and initializes reflection state 
+        # with a message indicating no results are available.
         if not candidate_results:
             logger.warning("[RewardReflectorOpenAIAgent] No candidate_results found. This may be the first iteration.")
             # For first iteration, we might not have results yet - skip reflection
             ctx.session.state["reflection"] = "No candidate results available for reflection (first iteration)."
             yield Event(author=self.name, content=None)
+            # Returns early with placeholder reflection for the first iteration, since we don't have any results to analyze yet.
             return
         
         logger.info(f"[RewardReflectorOpenAIAgent] Starting reflection for iteration {iteration}")
@@ -367,7 +387,7 @@ Return ONLY valid JSON (no markdown, no code blocks) with these fields.
 """
 
         from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-        
+        # Implements retry logic for the LLM API call to handle transient errors, rate limits, or timeouts.
         @retry(
             stop=stop_after_attempt(3),
             wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -378,7 +398,7 @@ Return ONLY valid JSON (no markdown, no code blocks) with these fields.
             return client.chat.completions.create(
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
+                temperature=0.2,    # Lower temperature (0.2) for more consistent analysis output.
             )
         
         try:

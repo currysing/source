@@ -25,7 +25,8 @@ def _load_yaml(path):
 
 class SetupAgent(BaseAgent):
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
-        if ctx.session.state.get("_setup_done", False): # Prevents running setup twice if agent is invoked multiple times.
+        # Prevents running setup twice if agent is invoked multiple times.
+        if ctx.session.state.get("_setup_done", False): 
             yield Event(author=self.name, content=None)
             return
         
@@ -57,7 +58,9 @@ class SetupAgent(BaseAgent):
         outdir = init_run_dir()     # outputs/run_YYYYMMDD_HHMMSS/
         leaderboard_path = init_leaderboard(outdir)     # outputs/run_.../leaderboard.csv
 
-        _, env_source, mod_name = get_env_and_source(loop_cfg["env_name"])  #  Extract the Brax environment source code. This is sent to the LLM.
+        #  Extract the Brax environment source code. 
+        # The LLM uses this to understand the environment dynamics and design reward functions accordingly.
+        _, env_source, mod_name = get_env_and_source(loop_cfg["env_name"])  
 
         (outdir / "env_code.py").write_text(env_source)     # Saves configuration for reproducibility and debugging
         save_json(outdir / "task_spec.json", task_spec)
@@ -98,7 +101,9 @@ class SetupAgent(BaseAgent):
             video_horizon = min(400, task_spec["evaluation"]["horizon"])
             
             # Use simple baseline function - no wrappers, no custom rewards, just raw environment
-            save_baseline_rollout_html(     # Creates rollout_baseline.html showing the untrained policy (random/zero actions) in the default environment. Useful baseline comparison.
+            # Creates rollout_baseline.html showing the untrained policy (random/zero actions) in the default environment.
+            # Useful baseline comparison.
+            save_baseline_rollout_html(
                 env_name=env_name,
                 out_dir=outdir,
                 seed=seed,
@@ -108,4 +113,5 @@ class SetupAgent(BaseAgent):
         except Exception as baseline_err:
             logger.warning(f"[SetupAgent] Baseline rollout failed (non-critical): {baseline_err}. Continuing...")
 
-        yield Event(author=self.name, content=None)     # Tells ADK this agent is done. SequentialAgent proceeds to the next agent (LoopAgent).
+        # Tells ADK this agent is done. SequentialAgent proceeds to the next agent (LoopAgent).
+        yield Event(author=self.name, content=None)
